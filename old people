@@ -1,0 +1,220 @@
+///Harvey last updated12-2-22
+
+#include <WiFi.h>
+#include <WireGuard-ESP32.h>
+#include <WebServer.h>
+#include <String.h>
+#include <LiquidCrystal_I2C.h>
+int lcdColumns = 20;
+int lcdRows = 4;
+int PIR = 23; //PIR pin
+int pir = 0;
+int pircount = 0; // Number of times the pir has seen a movment
+int lockpir = 0; // Stops continus counting
+int led = 19; // Just for gigles
+
+LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);
+
+// WiFi configuration --- UPDATE this configuration for your WiFi AP
+char ssid[] = "BT-HJAS7S";
+char password[] = "CR4vHkqmDeMdYk";
+
+// ------------------------------------------------------------------------------ //
+// LEAVE THIS PART FOR CONOR
+// ------------------------------------------------------------------------------ //
+
+// WireGuard configuration --- UPDATE this configuration from JSON
+char private_key[] = "8JGzAxj1y+KyEe20PNF7zyyRYgAbWNCEBCPBa9KSNnY=";  // [Interface] PrivateKey
+IPAddress local_ip(10, 194, 124, 15);         // [Interface] Address
+char public_key[] = "Tm9C03nPILEx9nI4Z5npsujCj5UUNeI6zW1gZ8QWP3s=";     // [Peer] PublicKey
+char endpoint_address[] = "141.0.157.156";    // [Peer] Endpoint
+int endpoint_port = 58248;              // [Peer] Endpoint
+
+// ------------------------------------------------------------------------------ //
+// ------------------------------------------------------------------------------ //
+
+static WireGuard wg;
+
+WebServer server(80); //Server on port 80
+
+void setup()
+{
+  //----------------------------------LCD-----------
+  // initialize LCD
+  lcd.init();
+  // turn on LCD backlight
+  lcd.backlight();
+  //--------------------------------------------
+  pinMode(2, INPUT);
+  pinMode(23, INPUT);
+  pinMode (led, OUTPUT);
+  Serial.begin(115200);
+  Serial.print("Connecting to the AP...");
+  // Try and connect to wifi network
+  WiFi.begin(ssid, password);
+  while ( !WiFi.isConnected() ) {
+    // Loop around until connected to wifi network
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  // Connect to NTP time servers, so we have the time
+  Serial.println("Adjusting system time...");
+  configTime(0, 0, "ntp.jst.mfeed.ad.jp", "ntp.nict.jp", "time.google.com");
+
+  time_t now = time(nullptr);
+
+  // the variable now, is just a count of seconds from 1970,
+  // so if we wait until it's not a small value, we know we've
+  // probably had a response from the time servers
+
+  // ------------------------------------------------------------------------------ //
+  // LEAVE THIS PART FOR CONOR, setting up VPN connection
+  // ------------------------------------------------------------------------------ //
+
+  Serial.println("Initializing WG interface Hold On to you pants...");
+  //-----------------------
+  lcd.setCursor(0, 0);
+  // print message
+  lcd.print("Initializing WG");
+  delay(1000);
+
+  int wgcontimes = 0;
+  while (!wg.begin(
+           local_ip,
+           private_key,
+           endpoint_address,
+           public_key,
+           endpoint_port) ) {
+    Serial.printf("Failed to connect to WG %wgcontimes times", ++wgcontimes);
+    delay(5000);
+  }
+
+
+  delay(2000);
+
+  wg.end();
+
+  delay(2000);
+  while (!wg.begin(
+           local_ip,
+           private_key,
+           endpoint_address,
+           public_key,
+           endpoint_port) ) {
+    Serial.printf("Failed to connect to WG %wgcontimes times", ++wgcontimes);
+    /////////////////
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Failed to connect");
+
+    delay(5000);
+  }
+
+
+  Serial.println("Connected to WG");
+  //lcd.clear();
+  lcd.setCursor(0, 1);
+  // print message
+  lcd.print("Connected to WG");
+  delay(1000);
+
+  ////////////////////
+
+
+  // ------------------------------------------------------------------------------ //
+  // ------------------------------------------------------------------------------ //
+
+  Serial.println("Starting webserver");
+
+  // Tell the webserver what to do when it recieves as request
+  // The first parameter tells you where the webpage is, the second
+  // is what function will be called when someone navigates there
+  server.on("/", ReplyToWebRequest);
+  server.on("/test/", ReplyToAnotherWebRequest);
+
+  server.begin();
+  Serial.println("HTTP server started");
+  //-----------------------------
+  //lcd.clear();
+  lcd.setCursor(0, 2);
+  // print message
+  lcd.print("HTTP server started");
+  delay(1000);
+  lcd.clear();
+  //---------------------
+}
+
+unsigned long lastmillis = 0;
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++  VOID LOOP  +++++++++++++++++++++++++++++
+void loop()
+{
+  // PIR //////////////////////
+  pir = digitalRead(PIR);
+  if (pir == 1 & lockpir == 0)
+  {
+    lcd.backlight();
+    lcd.clear();
+    pircount++;
+    lockpir = 1;
+    digitalWrite(led, HIGH);
+    lcd.setCursor(0, 0);
+    lcd.print("Pir Count is ");
+    //lcd.setCursor(4, 1);
+    lcd.print(pircount);
+  }
+  if (pir == 0 & lockpir == 1)
+
+  {
+    lockpir = 0;
+    lcd.noBacklight();
+    digitalWrite(led, LOW);
+
+  }
+
+  //pppppppppppppppppppppppppppppppppppppppppp
+  server.handleClient();
+  if (millis() > (lastmillis + 1000))
+  {
+    time_t now = time(nullptr);
+    Serial.println(String(ctime(&now)));
+    lastmillis = millis();
+  }
+  if (pir == 1)
+  {
+    lcd.setCursor(1, 3);
+
+    lcd.print("PIR is ON ");
+  }
+  else 
+  {
+    lcd.setCursor(1, 3);
+    //print message
+    lcd.print("          ");
+  }
+}
+
+//mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+
+
+
+
+void ReplyToAnotherWebRequest() {
+  server.send(200, "text/plain", "This is another page");
+}
+
+void ReplyToWebRequest() {
+  bool buttonState = digitalRead(2);
+  String WhatWeWillSend = "";
+
+
+
+
+  time_t now = time(nullptr);
+  WhatWeWillSend += String(ctime(&now));
+
+  server.send(200, "text/plain", "This is our test website\n" + WhatWeWillSend + "Pir count is (" + pircount + ")\nI'm still working on it Conor\nthe pir is 3.3v output and powered by 5v\n i2c Temprature will be next");
+  
+}
